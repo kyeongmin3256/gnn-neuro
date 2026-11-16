@@ -4,4 +4,5 @@ pyyaml>=6.0
 numpy>=1.24
 scikit-learn>=1.3
 tqdm>=4.66
-optimuskg>=0.1
+# Optional (Python >=3.12): optimuskg>=0.1
+# Not required when nodes/edges parquet paths are set in configs/default.yaml.
