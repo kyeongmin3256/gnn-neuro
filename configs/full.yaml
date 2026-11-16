@@ -1,0 +1,53 @@
+# Full-graph condition (no pruning). Use a separate --out dir from the pruned run.
+
+kg:
+  lcc: true
+  nodes_path: data/raw/largest_connected_component_nodes.parquet
+  edges_path: data/raw/largest_connected_component_edges.parquet
+
+graph_mode: full
+seeds_config: configs/seeds.yaml
+
+candidates:
+  mode: all_drugs_in_graph
+  report_indication_drugs_only: true
+
+split:
+  strategy: random_link
+  relations:
+    - INDICATION
+    - CONTRAINDICATION
+  restrict_diseases_to_seeds: true
+  ratios: [0.8, 0.1, 0.1]
+  seed: 42
+  mask_eval_edges: true
+
+model:
+  dim: 128
+  rotate:
+    margin: 9.0
+    adversarial_temperature: 1.0
+    lr: 0.0005
+    batch_size: 2048
+    num_neg: 64
+    epochs: 50
+    train_all_relations: true
+  rgcn:
+    hidden_dim: 128
+    num_layers: 2
+    dropout: 0.2
+    lr: 0.001
+    batch_size: 512
+    num_neg: 32
+    epochs: 40
+    decoder: distmult
+
+eval:
+  metrics: [auprc, mrr, hits@1, hits@3, hits@10]
+  primary: disease_to_drugs
+  secondary: drug_to_diseases
+  filtered: true
+  auprc_mode: full_candidates
+
+output_dir: outputs
+device: auto
