@@ -1,48 +1,59 @@
 # gnn-neuro
 
-OptimusKG 기반 neurological drug repurposing 베이스라인.
+OptimusKG baselines for neurological drug repurposing.
 
-**비교 모델:** RotatE vs R-GCN  
-**예측:** drug–disease `INDICATION` / `CONTRAINDICATION`  
-**평가:** disease-centric AUPRC, MRR, Hits@K (filtered)
+**Models:** RotatE vs R-GCN  
+**Targets:** drug–disease `INDICATION` / `CONTRAINDICATION`  
+**Metrics:** disease-centric AUPRC, MRR, Hits@K (filtered)
 
-## 설계 결정 (TxGNN 정렬)
+## Design choices (TxGNN-aligned)
 
-이전 실험에서 disease→drugs AUPRC가 ~0.04로 chance에 가까운 이유가:
+Earlier runs produced near-chance disease→drug AUPRC (~0.04) mainly because:
 
-1. 후보 약물 대비 positive가 매우 sparse한데, 작은 random negative subsample로 AUPRC를 측정함
-2. pruning / split / message-passing mask가 약하게 묶여 있었음
-3. “indication 있는 약물만” 쓰면 메트릭은 예뻐질 수 있지만, 재창출 후보를 원천 배제함
+1. Positives are very sparse relative to the drug candidate set, while AUPRC was estimated from a tiny random negative subsample
+2. Pruning, split construction, and message-passing edge masks were loosely coupled
+3. Restricting candidates to drugs that already have an indication can inflate metrics but excludes true repurposing candidates
 
-이번 코드의 기본값:
+Defaults in this repo:
 
-- **후보 약물 = 그래프에 있는 모든 DRG** (TxGNN과 동일). indication이 이미 있는 약물만으로 후보를 제한하지 않음
-- **지도 신호** = 알려진 INDICATION / CONTRAINDICATION 엣지
-- **평가** = disease마다 전체 약물 랭킹 후 macro AUPRC / MRR / Hits@K (filtered)
-- **pruning seed** = 슬라이드의 neuroinflammation BPO 6개 + neurodegenerative disease 10개(+descendants) + BPO-linked genes
+- **Candidates = all `DRG` nodes in the working graph** (same as TxGNN). Do not limit ranking to drugs that already have an indication
+- **Supervision = known `INDICATION` / `CONTRAINDICATION` edges**
+- **Evaluation = per-disease ranking over all drugs**, then macro AUPRC / MRR / Hits@K (filtered)
+- **Pruning seeds = 6 neuroinflammation BPOs + 10 neurodegenerative disease roots (+ descendants) + BPO-linked / seed genes**
+
+Recommended prune setting from the comparison table: **BPO+gene+disease, k=1** with traversal types `GEN/DRG/DIS/BPO/PWY`.
 
 ## Setup
 
 ```bash
 cd ~/Projects/gnn-neuro
-python -m pip install -e .
+python3 -m pip install -e .
 ```
+
+Place OptimusKG LCC parquets under `data/raw/` (or point `configs/default.yaml` at your paths):
+
+- `data/raw/largest_connected_component_nodes.parquet`
+- `data/raw/largest_connected_component_edges.parquet`
 
 ## Pipeline
 
 ```bash
-# 1) OptimusKG load + seed prune + split
-python scripts/prepare_graph.py --config configs/default.yaml
+# 1) Load OptimusKG + seed prune + split
+python3 scripts/prepare_graph.py --config configs/default.yaml
 
-# 2) Train baselines
-python scripts/train.py --model both --relation INDICATION
-python scripts/train.py --model both --relation CONTRAINDICATION
+# 2) Optional: pruning comparison table
+python3 scripts/compare_pruning.py --config configs/default.yaml
+
+# 3) Train baselines
+python3 scripts/train.py --model both --relation INDICATION
+python3 scripts/train.py --model both --relation CONTRAINDICATION
 ```
 
 Artifacts:
 
 - `outputs/graph/` — pruned nodes/edges, splits, `kg_index.pt`
 - `outputs/runs/` — checkpoints + `metrics_*.json`
+- `outputs/pruning_comparison.json` — seed × k comparison
 
 ## Seeds
 
