@@ -1,0 +1,66 @@
+# Default experiment config for OptimusKG drug-repurposing baselines.
+
+kg:
+  # Prefer local parquet if present; else use optimuskg client cache.
+  lcc: true
+  nodes_path: data/raw/largest_connected_component_nodes.parquet
+  edges_path: data/raw/largest_connected_component_edges.parquet
+
+graph_mode: pruned  # full | pruned
+seeds_config: configs/seeds.yaml
+
+# TxGNN-aligned decision:
+# - Train on known INDICATION / CONTRAINDICATION edges.
+# - Rank ALL drugs present in the (pruned) graph as candidates.
+# - Do NOT restrict candidates to drugs that already have an indication;
+#   that would exclude true repurposing candidates and inflate metrics.
+candidates:
+  mode: all_drugs_in_graph
+  # Secondary reporting only (not used for primary training).
+  report_indication_drugs_only: true
+
+split:
+  strategy: random_link  # random_link | zero_shot_disease
+  relations:
+    - INDICATION
+    - CONTRAINDICATION
+  # Only score drug–disease pairs involving seed neurodegenerative diseases.
+  restrict_diseases_to_seeds: true
+  ratios: [0.8, 0.1, 0.1]
+  seed: 42
+  # Remove val/test drug–disease edges from the message-passing / embedding graph.
+  mask_eval_edges: true
+
+model:
+  dim: 128
+  rotate:
+    margin: 9.0
+    adversarial_temperature: 1.0
+    lr: 0.0005
+    batch_size: 2048
+    num_neg: 64
+    epochs: 50
+    # Train RotatE on all relations in the working graph (structural + clinical).
+    train_all_relations: true
+  rgcn:
+    hidden_dim: 128
+    num_layers: 2
+    dropout: 0.2
+    lr: 0.001
+    batch_size: 512
+    num_neg: 32
+    epochs: 40
+    # Message passing uses all non-held-out edges; supervision on drug–disease only.
+    decoder: distmult
+
+eval:
+  metrics: [auprc, mrr, hits@1, hits@3, hits@10]
+  # Disease-centric: for each disease, rank all candidate drugs.
+  primary: disease_to_drugs
+  secondary: drug_to_diseases
+  filtered: true
+  # AUPRC uses full candidate list (not a tiny random negative sample).
+  auprc_mode: full_candidates
+
+output_dir: outputs
+device: auto
