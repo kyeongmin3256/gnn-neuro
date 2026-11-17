@@ -31,6 +31,7 @@ def train_rotate(
     save_every: int = 5,
     resume: bool = True,
     final_path: str | Path | None = None,
+    disease_candidate_ids: list[int] | None = None,
 ) -> tuple[RotatE, dict[str, Any]]:
     model = RotatE(kg.num_entities, kg.num_relations, dim=dim, margin=margin).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
@@ -97,18 +98,32 @@ def train_rotate(
         torch.save(model.state_dict(), final_path)
         print(f"[ckpt] final weights saved {final_path}", flush=True)
 
-    metrics = _eval_rotate(model, kg, relation=relation, device=device)
+    metrics = _eval_rotate(
+        model,
+        kg,
+        relation=relation,
+        device=device,
+        disease_candidate_ids=disease_candidate_ids,
+    )
     return model, {"train_loss": history, "metrics": metrics}
 
 
 @torch.no_grad()
-def _eval_rotate(model: RotatE, kg, *, relation: str, device: torch.device) -> dict[str, Any]:
+def _eval_rotate(
+    model: RotatE,
+    kg,
+    *,
+    relation: str,
+    device: torch.device,
+    disease_candidate_ids: list[int] | None = None,
+) -> dict[str, Any]:
     model.eval()
     test = kg.clinical["test"][relation].to(device)
     train = kg.clinical["train"][relation].to(device)
     val = kg.clinical["val"][relation].to(device)
     parts = [t for t in (train, val, test) if t.numel()]
     filt = torch.cat(parts, dim=0) if parts else test
+    disease_pool = disease_candidate_ids if disease_candidate_ids is not None else kg.disease_ids
 
     def score_fn(h, r, t):
         return model.score(h, r, t)
@@ -119,8 +134,13 @@ def _eval_rotate(model: RotatE, kg, *, relation: str, device: torch.device) -> d
     drug2dis = evaluate_drug_to_diseases(
         score_fn,
         test,
-        kg.disease_ids,
+        disease_pool,
         filtered_triples=filt,
         device=device,
     )
-    return {"disease_to_drugs": d2d, "drug_to_diseases": drug2dis, "relation": relation}
+    return {
+        "disease_to_drugs": d2d,
+        "drug_to_diseases": drug2dis,
+        "relation": relation,
+        "n_disease_candidates": len(disease_pool),
+    }

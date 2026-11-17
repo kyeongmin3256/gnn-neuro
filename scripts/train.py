@@ -14,6 +14,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from gnn_neuro.data.seeds import load_seed_config, resolve_seed_ids
 from gnn_neuro.data.tensorize import KnowledgeGraphIndex
 from gnn_neuro.train.train_rgcn import train_rgcn
 from gnn_neuro.train.train_rotate import train_rotate
@@ -44,6 +45,15 @@ def load_kg(path: Path) -> KnowledgeGraphIndex:
     )
 
 
+def seed_disease_entity_ids(kg: KnowledgeGraphIndex, cfg: dict) -> list[int]:
+    """Restrict drug→disease ranking to neurodegenerative seed diseases (~79)."""
+    seed_cfg = load_seed_config(ROOT / cfg["seeds_config"])
+    seeds = resolve_seed_ids(seed_cfg, ROOT)
+    ids = [kg.entity2id[d] for d in sorted(seeds["diseases"]) if d in kg.entity2id]
+    print(f"drug→disease candidates restricted to {len(ids)} seed diseases")
+    return ids
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
@@ -58,6 +68,7 @@ def main() -> None:
     cfg = yaml.safe_load((ROOT / args.config).read_text())
     device = _device(cfg.get("device", "auto"))
     kg = load_kg(ROOT / args.graph)
+    disease_cands = seed_disease_entity_ids(kg, cfg)
     out_dir = ROOT / args.out
     out_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir = out_dir / "checkpoints"
@@ -83,6 +94,7 @@ def main() -> None:
             save_every=int(args.save_every),
             resume=resume,
             final_path=final_rotate,
+            disease_candidate_ids=disease_cands,
         )
         results["rotate"] = info["metrics"]
         results["rotate_train_loss"] = info["train_loss"][-1] if info["train_loss"] else None
@@ -106,6 +118,7 @@ def main() -> None:
             save_every=int(args.save_every),
             resume=resume,
             final_path=final_rgcn,
+            disease_candidate_ids=disease_cands,
         )
         results["rgcn"] = info["metrics"]
         results["rgcn_train_loss"] = info["train_loss"][-1] if info["train_loss"] else None

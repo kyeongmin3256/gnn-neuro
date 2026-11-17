@@ -32,6 +32,7 @@ def train_rgcn(
     save_every: int = 5,
     resume: bool = True,
     final_path: str | Path | None = None,
+    disease_candidate_ids: list[int] | None = None,
 ) -> tuple[RGCNLinkPredictor, dict[str, Any]]:
     model = RGCNLinkPredictor(
         kg.num_entities, kg.num_relations, dim=dim, num_layers=num_layers, dropout=dropout
@@ -95,7 +96,14 @@ def train_rgcn(
         torch.save(model.state_dict(), final_path)
         print(f"[ckpt] final weights saved {final_path}", flush=True)
 
-    metrics = _eval_rgcn(model, kg, edge_index_per_rel, relation=relation, device=device)
+    metrics = _eval_rgcn(
+        model,
+        kg,
+        edge_index_per_rel,
+        relation=relation,
+        device=device,
+        disease_candidate_ids=disease_candidate_ids,
+    )
     return model, {"train_loss": history, "metrics": metrics}
 
 
@@ -107,6 +115,7 @@ def _eval_rgcn(
     *,
     relation: str,
     device: torch.device,
+    disease_candidate_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     model.eval()
     ent = model.encode(edge_index_per_rel)
@@ -115,6 +124,7 @@ def _eval_rgcn(
     val = kg.clinical["val"][relation].to(device)
     parts = [t for t in (train, val, test) if t.numel()]
     filt = torch.cat(parts, dim=0) if parts else test
+    disease_pool = disease_candidate_ids if disease_candidate_ids is not None else kg.disease_ids
 
     def score_fn(h, r, t):
         return model.decoder.score(h, r, t, ent)
@@ -123,6 +133,11 @@ def _eval_rgcn(
         score_fn, test, kg.drug_ids, filtered_triples=filt, device=device
     )
     drug2dis = evaluate_drug_to_diseases(
-        score_fn, test, kg.disease_ids, filtered_triples=filt, device=device
+        score_fn, test, disease_pool, filtered_triples=filt, device=device
     )
-    return {"disease_to_drugs": d2d, "drug_to_diseases": drug2dis, "relation": relation}
+    return {
+        "disease_to_drugs": d2d,
+        "drug_to_diseases": drug2dis,
+        "relation": relation,
+        "n_disease_candidates": len(disease_pool),
+    }
