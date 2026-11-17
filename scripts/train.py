@@ -51,6 +51,8 @@ def main() -> None:
     parser.add_argument("--model", choices=["rotate", "rgcn", "both"], default="both")
     parser.add_argument("--relation", default="INDICATION")
     parser.add_argument("--out", default="outputs/runs")
+    parser.add_argument("--save-every", type=int, default=5)
+    parser.add_argument("--no-resume", action="store_true")
     args = parser.parse_args()
 
     cfg = yaml.safe_load((ROOT / args.config).read_text())
@@ -58,10 +60,14 @@ def main() -> None:
     kg = load_kg(ROOT / args.graph)
     out_dir = ROOT / args.out
     out_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir = out_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    resume = not args.no_resume
 
     results = {}
     if args.model in ("rotate", "both"):
         mcfg = cfg["model"]["rotate"]
+        final_rotate = out_dir / f"rotate_{args.relation}.pt"
         model, info = train_rotate(
             kg,
             dim=int(cfg["model"].get("dim", mcfg.get("dim", 128))),
@@ -73,14 +79,18 @@ def main() -> None:
             device=device,
             train_all_relations=bool(mcfg.get("train_all_relations", True)),
             relation=args.relation,
+            ckpt_dir=ckpt_dir,
+            save_every=int(args.save_every),
+            resume=resume,
+            final_path=final_rotate,
         )
-        torch.save(model.state_dict(), out_dir / f"rotate_{args.relation}.pt")
         results["rotate"] = info["metrics"]
         results["rotate_train_loss"] = info["train_loss"][-1] if info["train_loss"] else None
         print("RotatE:", json.dumps(info["metrics"], indent=2))
 
     if args.model in ("rgcn", "both"):
         mcfg = cfg["model"]["rgcn"]
+        final_rgcn = out_dir / f"rgcn_{args.relation}.pt"
         model, info = train_rgcn(
             kg,
             dim=int(mcfg.get("hidden_dim", cfg["model"].get("dim", 128))),
@@ -92,8 +102,11 @@ def main() -> None:
             epochs=int(mcfg.get("epochs", 40)),
             device=device,
             relation=args.relation,
+            ckpt_dir=ckpt_dir,
+            save_every=int(args.save_every),
+            resume=resume,
+            final_path=final_rgcn,
         )
-        torch.save(model.state_dict(), out_dir / f"rgcn_{args.relation}.pt")
         results["rgcn"] = info["metrics"]
         results["rgcn_train_loss"] = info["train_loss"][-1] if info["train_loss"] else None
         print("R-GCN:", json.dumps(info["metrics"], indent=2))
