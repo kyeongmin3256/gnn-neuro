@@ -2,8 +2,8 @@
 #SBATCH --job-name=gnn-eval-only
 #SBATCH --partition=hopperhour
 #SBATCH --gres=gpu:1
-#SBATCH --mem=32G
-#SBATCH --time=1:00:00
+#SBATCH --mem=64G
+#SBATCH --time=2:00:00
 #SBATCH --output=/local/scratch/kkim636/gnn-neuro/outputs/logs/%x_%j.out
 #SBATCH --error=/local/scratch/kkim636/gnn-neuro/outputs/logs/%x_%j.err
 
