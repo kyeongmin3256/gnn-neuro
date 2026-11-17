@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=gnn-prepare-both
-#SBATCH --partition=hopperday
+#SBATCH --partition=hopperweek
 #SBATCH --mem=64G
-#SBATCH --time=2:00:00
+#SBATCH --time=4:00:00
 #SBATCH --output=/local/scratch/kkim636/gnn-neuro/outputs/logs/%x_%j.out
 #SBATCH --error=/local/scratch/kkim636/gnn-neuro/outputs/logs/%x_%j.err
 

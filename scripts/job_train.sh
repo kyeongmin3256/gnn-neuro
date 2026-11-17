@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=gnn-neuro-train
-#SBATCH --partition=hopperday
+#SBATCH --partition=hopperweek
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
-#SBATCH --time=12:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --output=/local/scratch/kkim636/gnn-neuro/outputs/logs/%x_%j.out
 #SBATCH --error=/local/scratch/kkim636/gnn-neuro/outputs/logs/%x_%j.err
 
