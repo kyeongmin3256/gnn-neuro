@@ -82,9 +82,10 @@ def _eval_rgcn(
     model.eval()
     ent = model.encode(edge_index_per_rel)
     test = kg.clinical["test"][relation].to(device)
-    train = kg.clinical["train"][relation]
-    val = kg.clinical["val"][relation]
-    filt = torch.cat([train, val, test], dim=0).to(device)
+    train = kg.clinical["train"][relation].to(device)
+    val = kg.clinical["val"][relation].to(device)
+    parts = [t for t in (train, val, test) if t.numel()]
+    filt = torch.cat(parts, dim=0) if parts else test
 
     def score_fn(h, r, t):
         return model.decoder.score(h, r, t, ent)

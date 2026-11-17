@@ -73,9 +73,10 @@ def train_rotate(
 def _eval_rotate(model: RotatE, kg, *, relation: str, device: torch.device) -> dict[str, Any]:
     model.eval()
     test = kg.clinical["test"][relation].to(device)
-    train = kg.clinical["train"][relation]
-    val = kg.clinical["val"][relation]
-    filt = torch.cat([train, val, test], dim=0).to(device) if train.numel() else test
+    train = kg.clinical["train"][relation].to(device)
+    val = kg.clinical["val"][relation].to(device)
+    parts = [t for t in (train, val, test) if t.numel()]
+    filt = torch.cat(parts, dim=0) if parts else test
 
     def score_fn(h, r, t):
         return model.score(h, r, t)
