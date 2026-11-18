@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 
 class RGCNLayer(nn.Module):
@@ -14,7 +15,7 @@ class RGCNLayer(nn.Module):
         out_dim: int,
         num_relations: int,
         dropout: float = 0.0,
-        edge_chunk_size: int = 500_000,
+        edge_chunk_size: int = 100_000,
     ):
         super().__init__()
         self.num_relations = num_relations
@@ -26,12 +27,11 @@ class RGCNLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, edge_index_per_rel: list[torch.Tensor]) -> torch.Tensor:
-        # Chunked per-relation aggregation so full-graph MP fits in ~24GB.
+        # Chunked per-relation aggregation. Edges may live on CPU.
         out = self.self_loop(x)
         for r, edge_index in enumerate(edge_index_per_rel):
             if edge_index.numel() == 0:
                 continue
-            # Edges may live on CPU; move only the active chunk to x.device.
             src_all, dst_all = edge_index[0], edge_index[1]
             n_edges = src_all.size(0)
             agg = torch.zeros(x.size(0), out.size(-1), device=x.device, dtype=x.dtype)
@@ -48,6 +48,25 @@ class RGCNLayer(nn.Module):
             out = out + agg / deg
             del agg, deg
         return self.dropout(F.relu(out))
+
+
+def sample_edges_per_rel(
+    edge_index_per_rel: list[torch.Tensor],
+    max_edges_per_rel: int,
+    *,
+    generator: torch.Generator | None = None,
+) -> list[torch.Tensor]:
+    """Randomly subsample edges per relation for memory-safe MP training."""
+    if max_edges_per_rel <= 0:
+        return edge_index_per_rel
+    out: list[torch.Tensor] = []
+    for ei in edge_index_per_rel:
+        if ei.numel() == 0 or ei.size(1) <= max_edges_per_rel:
+            out.append(ei)
+            continue
+        idx = torch.randperm(ei.size(1), generator=generator, device=ei.device)[:max_edges_per_rel]
+        out.append(ei[:, idx])
+    return out
 
 
 class RGCNEncoder(nn.Module):
@@ -74,7 +93,8 @@ class RGCNEncoder(nn.Module):
     def forward(self, edge_index_per_rel: list[torch.Tensor]) -> torch.Tensor:
         h = self.emb.weight
         for layer in self.layers:
-            h = layer(h, edge_index_per_rel)
+            # Recompute layer on backward to avoid storing all edge messages.
+            h = checkpoint(layer, h, edge_index_per_rel, use_reentrant=False)
         return h
 
 

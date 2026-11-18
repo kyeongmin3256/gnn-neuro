@@ -50,6 +50,9 @@ model:
     batch_size: 512
     num_neg: 32
     epochs: 40
+    # Cap edges/relation during train MP so full OptimusKG fits in 24GB.
+    # Eval still encodes the full graph under no_grad + chunked aggregation.
+    max_edges_per_rel: 150000
     # Message passing uses all non-held-out edges; supervision on drug–disease only.
     decoder: distmult
 

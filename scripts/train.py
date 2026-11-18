@@ -122,6 +122,7 @@ def main() -> None:
             resume=resume,
             final_path=final_rgcn,
             disease_candidate_ids=disease_cands,
+            max_edges_per_rel=int(mcfg.get("max_edges_per_rel", 150_000)),
         )
         results["rgcn"] = info["metrics"]
         results["rgcn_train_loss"] = info["train_loss"][-1] if info["train_loss"] else None

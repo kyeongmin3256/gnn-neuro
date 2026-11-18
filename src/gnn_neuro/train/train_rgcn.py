@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from gnn_neuro.data.tensorize import relation_edge_index
 from gnn_neuro.eval.metrics import evaluate_disease_to_drugs, evaluate_drug_to_diseases
-from gnn_neuro.models.rgcn import RGCNLinkPredictor
+from gnn_neuro.models.rgcn import RGCNLinkPredictor, sample_edges_per_rel
 from gnn_neuro.train.checkpoint import latest_checkpoint, load_checkpoint, save_checkpoint
 from gnn_neuro.train.negatives import corrupt_drug_for_disease
 
@@ -33,13 +33,14 @@ def train_rgcn(
     resume: bool = True,
     final_path: str | Path | None = None,
     disease_candidate_ids: list[int] | None = None,
+    max_edges_per_rel: int = 150_000,
 ) -> tuple[RGCNLinkPredictor, dict[str, Any]]:
     model = RGCNLinkPredictor(
         kg.num_entities, kg.num_relations, dim=dim, num_layers=num_layers, dropout=dropout
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
 
-    # Keep relation edges on CPU; RGCNLayer streams chunks to GPU during MP.
+    # Keep relation edges on CPU; stream/sample onto GPU during MP.
     triples = kg.triples
     edge_index_per_rel = relation_edge_index(triples, kg.num_relations)
     if device.type == "cuda":
@@ -69,25 +70,27 @@ def train_rgcn(
             history = list(blob.get("history") or [])
             start_epoch = int(blob.get("epoch", 0)) + 1
 
+    print(
+        f"[rgcn] max_edges_per_rel={max_edges_per_rel} (train samples edges; eval uses full graph, no_grad)",
+        flush=True,
+    )
+
     for epoch in range(start_epoch, epochs + 1):
         model.train()
-        # One full-graph encode per epoch (chunked MP); reuse embeddings for all
-        # batches so we do not OOM re-materializing messages every step.
-        ent = model.encode(edge_index_per_rel)
-        opt.zero_grad(set_to_none=True)
         total = 0.0
         n = 0
         for (batch,) in tqdm(loader, desc=f"R-GCN epoch {epoch}/{epochs}", leave=False):
             batch = batch.to(device)
             neg = corrupt_drug_for_disease(batch, drug_ids, num_neg)
-            loss = model.loss(batch, neg, ent=ent)
-            # retain_graph: encoder graph is shared across batches this epoch.
-            loss.backward(retain_graph=True)
+            # Sampled MP graph each step so autograd fits in 24GB.
+            edges = sample_edges_per_rel(edge_index_per_rel, max_edges_per_rel)
+            loss = model.loss(batch, neg, edges)
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
             total += float(loss.item()) * batch.size(0)
             n += batch.size(0)
-            del neg, loss
-        opt.step()
-        del ent
+            del neg, loss, edges
         history.append(total / max(n, 1))
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -99,7 +102,7 @@ def train_rgcn(
                 optimizer=opt,
                 epoch=epoch,
                 history=history,
-                meta={"relation": relation},
+                meta={"relation": relation, "max_edges_per_rel": max_edges_per_rel},
             )
 
     if final_path is not None:
@@ -129,6 +132,9 @@ def _eval_rgcn(
     disease_candidate_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     model.eval()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    # Full-graph encode under no_grad + chunked MP (no autograd tensors kept).
     ent = model.encode(edge_index_per_rel)
     test = kg.clinical["test"][relation].to(device)
     train = kg.clinical["train"][relation].to(device)
