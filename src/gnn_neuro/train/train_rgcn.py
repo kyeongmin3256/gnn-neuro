@@ -39,8 +39,11 @@ def train_rgcn(
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
 
-    triples = kg.triples.to(device)
-    edge_index_per_rel = [e.to(device) for e in relation_edge_index(triples, kg.num_relations)]
+    # Keep relation edges on CPU; RGCNLayer streams chunks to GPU during MP.
+    triples = kg.triples
+    edge_index_per_rel = relation_edge_index(triples, kg.num_relations)
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
 
     train_pos = kg.clinical["train"][relation]
     if train_pos.numel() == 0:
@@ -68,18 +71,26 @@ def train_rgcn(
 
     for epoch in range(start_epoch, epochs + 1):
         model.train()
+        # One full-graph encode per epoch (chunked MP); reuse embeddings for all
+        # batches so we do not OOM re-materializing messages every step.
+        ent = model.encode(edge_index_per_rel)
+        opt.zero_grad(set_to_none=True)
         total = 0.0
         n = 0
         for (batch,) in tqdm(loader, desc=f"R-GCN epoch {epoch}/{epochs}", leave=False):
             batch = batch.to(device)
             neg = corrupt_drug_for_disease(batch, drug_ids, num_neg)
-            loss = model.loss(batch, neg, edge_index_per_rel)
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
+            loss = model.loss(batch, neg, ent=ent)
+            # retain_graph: encoder graph is shared across batches this epoch.
+            loss.backward(retain_graph=True)
             total += float(loss.item()) * batch.size(0)
             n += batch.size(0)
+            del neg, loss
+        opt.step()
+        del ent
         history.append(total / max(n, 1))
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
         if ckpt_path_dir is not None and (epoch % save_every == 0 or epoch == epochs):
             save_checkpoint(

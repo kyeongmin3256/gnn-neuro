@@ -8,9 +8,17 @@ import torch.nn.functional as F
 
 
 class RGCNLayer(nn.Module):
-    def __init__(self, in_dim: int, out_dim: int, num_relations: int, dropout: float = 0.0):
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        num_relations: int,
+        dropout: float = 0.0,
+        edge_chunk_size: int = 500_000,
+    ):
         super().__init__()
         self.num_relations = num_relations
+        self.edge_chunk_size = edge_chunk_size
         self.weight = nn.ModuleList(
             [nn.Linear(in_dim, out_dim, bias=False) for _ in range(num_relations)]
         )
@@ -18,20 +26,27 @@ class RGCNLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, edge_index_per_rel: list[torch.Tensor]) -> torch.Tensor:
+        # Chunked per-relation aggregation so full-graph MP fits in ~24GB.
         out = self.self_loop(x)
         for r, edge_index in enumerate(edge_index_per_rel):
             if edge_index.numel() == 0:
                 continue
-            src, dst = edge_index[0], edge_index[1]
-            msg = self.weight[r](x[src])
-            # Mean aggregation into dst.
-            agg = torch.zeros(x.size(0), msg.size(-1), device=x.device, dtype=x.dtype)
-            ones = torch.ones(dst.size(0), device=x.device, dtype=x.dtype)
+            # Edges may live on CPU; move only the active chunk to x.device.
+            src_all, dst_all = edge_index[0], edge_index[1]
+            n_edges = src_all.size(0)
+            agg = torch.zeros(x.size(0), out.size(-1), device=x.device, dtype=x.dtype)
             deg = torch.zeros(x.size(0), device=x.device, dtype=x.dtype)
-            agg.index_add_(0, dst, msg)
-            deg.index_add_(0, dst, ones)
+            for start in range(0, n_edges, self.edge_chunk_size):
+                end = min(start + self.edge_chunk_size, n_edges)
+                src = src_all[start:end].to(x.device, non_blocking=True)
+                dst = dst_all[start:end].to(x.device, non_blocking=True)
+                msg = self.weight[r](x[src])
+                agg.index_add_(0, dst, msg)
+                deg.index_add_(0, dst, torch.ones(dst.size(0), device=x.device, dtype=x.dtype))
+                del msg, src, dst
             deg = deg.clamp(min=1).unsqueeze(-1)
             out = out + agg / deg
+            del agg, deg
         return self.dropout(F.relu(out))
 
 
@@ -100,9 +115,14 @@ class RGCNLinkPredictor(nn.Module):
         self,
         pos: torch.Tensor,
         neg: torch.Tensor,
-        edge_index_per_rel: list[torch.Tensor],
+        edge_index_per_rel: list[torch.Tensor] | None = None,
+        *,
+        ent: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        ent = self.encode(edge_index_per_rel)
+        if ent is None:
+            if edge_index_per_rel is None:
+                raise ValueError("Provide edge_index_per_rel or ent")
+            ent = self.encode(edge_index_per_rel)
         pos_s = self.score_triples(pos, ent)
         neg_s = self.score_triples(neg, ent)
         scores = torch.cat([pos_s, neg_s], dim=0)

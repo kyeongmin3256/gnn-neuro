@@ -99,6 +99,9 @@ def main() -> None:
         results["rotate"] = info["metrics"]
         results["rotate_train_loss"] = info["train_loss"][-1] if info["train_loss"] else None
         print("RotatE:", json.dumps(info["metrics"], indent=2))
+        del model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
     if args.model in ("rgcn", "both"):
         mcfg = cfg["model"]["rgcn"]
