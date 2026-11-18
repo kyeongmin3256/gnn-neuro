@@ -26,7 +26,7 @@ split:
     - CONTRAINDICATION
   # Only score drug–disease pairs involving seed neurodegenerative diseases.
   restrict_diseases_to_seeds: true
-  ratios: [0.8, 0.1, 0.1]
+  ratios: [0.9, 0.05, 0.05]
   seed: 42
   # Remove val/test drug–disease edges from the message-passing / embedding graph.
   mask_eval_edges: true
