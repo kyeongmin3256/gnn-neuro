@@ -16,13 +16,14 @@ mkdir -p outputs/logs
 GRAPH="${GRAPH:-outputs/graph/kg_index.pt}"
 RUNS="${RUNS:-outputs/runs}"
 OUT_NAME="${OUT_NAME:-metrics_INDICATION_seed_diseases.json}"
+MODEL="${MODEL:-both}"
 
 python scripts/eval_only.py \
   --config configs/default.yaml \
   --graph "$GRAPH" \
   --runs "$RUNS" \
   --relation INDICATION \
-  --model both \
+  --model "$MODEL" \
   --out-name "$OUT_NAME"
 
 echo done
